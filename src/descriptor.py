@@ -4,45 +4,19 @@ import json
 import pandas as pd
 import numpy as np
 
+from typing import Tuple
+
 from datasets import Dataset, DatasetDict, concatenate_datasets
-from transformers import PretrainedConfig, PreTrainedModel, PreTrainedTokenizer
+from transformers import BertForSequenceClassification, PreTrainedTokenizer, AutoTokenizer, AutoModelForSequenceClassification
 from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix
 from tqdm.auto import tqdm
 from typing import Callable
 
 
-class DescriminatorModelConfig(PretrainedConfig):
-    model_type = 'descriminatormodel'
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-
-class DescriminatorModel(PreTrainedModel):
-    config_class = DescriminatorModelConfig
-    def __init__(self, config):
-        super().__init__(config)
-        self.config = config
-        self.model = torch.nn.Sequential(
-            torch.nn.Linear(768, 512),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(0.1),
-            torch.nn.Linear(512, 256),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(0.1),
-            torch.nn.Linear(256, 1),
-            torch.nn.Dropout(0.1),
-            torch.nn.Sigmoid()
-        )
-    def forward(self, input):
-        return self.model(input) 
-
-
 class Descriminator(torch.nn.Module):
     def __init__(
             self,
-            tokenizer: PreTrainedTokenizer,
-            encode_tokens: Callable,
             n_epoch: int,
             true_df: pd.DataFrame,
             false_df: pd.DataFrame,
@@ -52,33 +26,48 @@ class Descriminator(torch.nn.Module):
             **kwargs
         ) -> None:
         super().__init__(*args, **kwargs)
-        self.encode_tokens = encode_tokens
-        self.tokenizer = tokenizer
         self.n_epoch = n_epoch
-        self.dataset = self._get_dataset(true_df=true_df, false_df=false_df)
-        self.train_dataloader = DataLoader(
-            dataset=self.dataset['train'],
-            shuffle=True,
-            batch_size=batch_size,
-        )
-        self.test_dataloader = DataLoader(
-            dataset=self.dataset['test'],
-            shuffle=False,
-            batch_size=batch_size,
-        )
+        if (is_train):
+            self.dataset = self._get_dataset(true_df=true_df, false_df=false_df)
+            self.train_dataloader = DataLoader(
+                dataset=self.dataset['train'],
+                shuffle=True,
+                batch_size=batch_size,
+            )
+            self.test_dataloader = DataLoader(
+                dataset=self.dataset['test'],
+                shuffle=False,
+                batch_size=batch_size,
+            )
 
-        self.model = self.train() if is_train else DescriminatorModel.from_pretrained('Roaoch/CyberClassic-Discriminator')
+            self.model, self.tokenizer = self.train()
+        else:
+            self.model = AutoModelForSequenceClassification.from_pretrained('Roaoch/CyberClassic-Discriminator')
+            self.tokenizer = AutoTokenizer.from_pretrained('Roaoch/CyberClassic-Discriminator')
 
-    def forward(self, x: torch.FloatTensor):
-        return self.model(x)
+    def forward(self, x: str):
+        tokens = self.tokenizer(x, return_tensors='pt', truncation=True, padding=True)
+        return self.model(**tokens).logits
 
-    def train(self) -> DescriminatorModel:
+    def train(self) -> Tuple[BertForSequenceClassification, PreTrainedTokenizer]:
         print('<--- Train Descriminator --->')
-        model = DescriminatorModel(DescriminatorModelConfig())
+
+        id2label = {0: "DOSTOYEVSKI"}
+        label2id = {"DOSTOYEVSKI": 0}
+
+        model = AutoModelForSequenceClassification.from_pretrained(
+            'google-bert/bert-base-multilingual-uncased',
+            num_labels=1, 
+            id2label=id2label, 
+            label2id=label2id
+        )
+        tokenizer = AutoTokenizer.from_pretrained('google-bert/bert-base-multilingual-uncased')
+
+        tokenizer = tokenizer.train_new_from_iterator(self.train_dataloader.dataset['text'], tokenizer.vocab_size)
+
         lr = 1e-3
 
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-        loss_fn = torch.nn.BCELoss()
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer=optimizer,
             max_lr=lr,
@@ -96,12 +85,14 @@ class Descriminator(torch.nn.Module):
         for i in range(self.n_epoch):
             epoch_loss = 0
             for batch in self.train_dataloader:
-                labels: torch.Tensor = batch['label'].reshape(-1, 1).float()
-                input_tokens = self.tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True)
-                input_emb = self.encode_tokens(**input_tokens)
+                labels: torch.Tensor = torch.concatenate(
+                    (batch['label'][0].reshape(-1, 1), batch['label'][1].reshape(-1, 1)),
+                    dim=1
+                )
+                input_tokens = tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True)
 
-                outputs = model(input_emb)
-                loss = loss_fn(outputs, labels)
+                outputs = model(**input_tokens, labels=labels)
+                loss = outputs.loss
                 loss.backward()
 
                 optimizer.step()
@@ -116,14 +107,14 @@ class Descriminator(torch.nn.Module):
                 true_posirive = []
                 valid_bar = tqdm(range(len(self.test_dataloader)))
                 for batch in self.test_dataloader:
-                    labels: torch.Tensor = batch['label'].reshape(-1, 1).float()
-                    input_tokens = self.tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True)
-                    input_emb = self.encode_tokens(**input_tokens)
+                    input_tokens = tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True)
 
-                    outputs = model(input_emb)
+                    outputs = model(**input_tokens)
+                    logits = outputs.logits
+                    labels: torch.Tensor = batch['label'][1]
                     try:
-                        true_negative.append(self._get_true_negative(outputs, labels))
-                        true_posirive.append(self._get_true_positive(outputs, labels))
+                        true_negative.append(self._get_true_negative(logits, labels))
+                        true_posirive.append(self._get_true_positive(logits, labels))
                     except ValueError as e:
                         tqdm.write(str(e))
                     valid_bar.update(1)
@@ -137,8 +128,10 @@ class Descriminator(torch.nn.Module):
 
         print('<--- Training Descriminator end --->')
         model.save_pretrained('Roaoch/CyberClassic/descriminator')
+        tokenizer.save_pretrained('Roaoch/CyberClassic/descriminator')
         with open('discriminator_metrics.json', 'w') as f:
             json.dump(metrics, f)
+        return (model, tokenizer)
 
     def _get_true_negative(self, input: torch.Tensor, target: torch.Tensor):
         y_pred_class = (input > 0.5).float()

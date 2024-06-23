@@ -21,7 +21,6 @@ class Generator(torch.nn.Module):
             df: pd.DataFrame,
             is_tain=False,
             max_length=50,
-            min_length=30,
             batch_size=64,
             n_epoch=10,
             *args, 
@@ -34,30 +33,27 @@ class Generator(torch.nn.Module):
         
         self.generation_config = GenerationConfig(
             max_new_tokens=max_length,
-            min_new_tokens=min_length,
             num_beams=6,
-            # top_k=20,
-            # top_p=0.95,
-            do_sample=True
+            early_stopping=True,
+            do_sample=True,
+            eos_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.tokenizer.pad_token_id
         )
 
         self.bleu_smoothing = SmoothingFunction().method7
         self.rouge_scorer = rouge_scorer.RougeScorer(['rougeL'])
         
         if is_tain:
-            self.data_collator = DataCollatorForLanguageModeling(self.tokenizer, mlm=False)
             self.ds = self._get_ds(df=df)
             self.train_loader = DataLoader(
                 dataset=self.ds['train'],
                 shuffle=True,
-                batch_size=self.batch_size,
-                collate_fn=self.data_collator
+                batch_size=self.batch_size
             )
             self.test_loader = DataLoader(
                 dataset=self.ds['test'],
                 shuffle=False,
-                batch_size=self.batch_size,
-                collate_fn=self.data_collator
+                batch_size=self.batch_size
             )
             self.model = self.train()
         else:
@@ -77,25 +73,11 @@ class Generator(torch.nn.Module):
         return self.model.generate(**input, generation_config=self.generation_config)
 
     def _get_ds(self, df: pd.DataFrame) -> DatasetDict:
-        def group_texts(examples):
-            concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
-            total_length = len(concatenated_examples[list(examples.keys())[0]])
-            if total_length >= self.batch_size:
-                total_length = (total_length // self.batch_size) * self.batch_size
-            result = {
-                k: [t[i : i + self.batch_size] for i in range(0, total_length, self.batch_size)]
-                for k, t in concatenated_examples.items()
-            }
-            result["labels"] = result["input_ids"].copy()
-            return result
-        
         ds = Dataset.from_pandas(df)
-        ds = ds.map(lambda e: self.tokenizer(e['text']), remove_columns=['text'])
-        ds = ds.map(group_texts, batched=True)
         return ds.train_test_split(0.1)
     
     def train(self) -> MvpForCausalLM:
-        model = AutoModelForCausalLM.from_pretrained('ai-forever/rugpt3small_based_on_gpt2')
+        model = AutoModelForCausalLM.from_pretrained('openai-community/gpt2')
 
         print('<--- Train Generator --->')
         lr = 1e-3
@@ -122,7 +104,13 @@ class Generator(torch.nn.Module):
             model.train()
 
             for batch in self.train_loader:
-                output = model(**batch)
+                batch = self.tokenizer(
+                    batch['text'], 
+                    return_tensors='pt', 
+                    padding=True, 
+                    truncation=True
+                )
+                output = model(**batch, labels=batch['input_ids'].clone().detach())
                 loss = output.loss
                 loss.backward()
 
@@ -140,7 +128,13 @@ class Generator(torch.nn.Module):
                 rouge_scores = []
                 valid_bar = tqdm(range(len(self.test_loader)))
                 for batch in self.test_loader:
-                    outputs = model(**batch)
+                    batch = self.tokenizer(
+                        batch['text'], 
+                        return_tensors='pt', 
+                        padding=True, 
+                        truncation=True
+                    )
+                    outputs = model(**batch, labels=batch['input_ids'].clone().detach())
                     loss = outputs.loss
                     losses.append(loss.item())
 
