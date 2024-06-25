@@ -9,7 +9,7 @@ from src.generator import Generator
 
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
 from rouge_score import rouge_scorer
-from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig, AutoModelForQuestionAnswering
 from datasets import Dataset
 from torch.utils.data import DataLoader
 from datasets import Dataset, DatasetDict
@@ -68,32 +68,32 @@ class GAN(torch.nn.Module):
 
     def train(self):
         def get_score(texts: List[str]) -> float:
-            tokens = self.tokenizer(texts, return_tensors='pt', padding=True, truncation=True)
-            embedings = self.generator.encode(**tokens)
-            res = self.descriminator(embedings)
-            multiplier = torch.Tensor([[2] if text[-1] == '.' else [1] for text in texts])
+            res = self.descriminator(texts)
+            multiplier = 1 # torch.Tensor([[2] if text[-1] == '.' else [1] for text in texts])
             return res * 10 * multiplier
         
         new_model = AutoModelForCausalLMWithValueHead.from_pretrained('Roaoch/CyberClassic-Generator')
         new_model_ref = AutoModelForCausalLMWithValueHead.from_pretrained('Roaoch/CyberClassic-Generator')
 
-        epoch = 50
-        per_epoch =1
+        epoch = 30
+        per_epoch = 1
+
+        query_txts = [' '.join(item.split(' ')[:3]) for item in self.df.values[:100].flatten()]
 
         ppo_config = {
             "mini_batch_size": 1, 
-            "batch_size": 5
+            "batch_size": len(query_txts)
         }
         config = PPOConfig(**ppo_config)
         ppo_trainer = PPOTrainer(config, new_model, new_model_ref, self.tokenizer)
 
-        query_txts = [
-            'Сложно идти в',
-            'Естественно долго',
-            'Служить отечеству',
-            'Холоп',
-            'Тихо в'
-        ]
+        # query_txts = [
+        #     'Сложно идти в',
+        #     'Естественно долго',
+        #     'Служить отечеству',
+        #     'Холоп',
+        #     'Тихо в'
+        # ]
         query_tensor = self.tokenizer(
             query_txts, 
             return_tensors="pt", 
@@ -134,42 +134,110 @@ class GAN(torch.nn.Module):
         with open('rl_metrics.json', 'w') as f:
             json.dump(metrics, f)
 
-    def test_generate(self) -> List[str]:
+    def test_answer(self) -> List[str]:
         torch.manual_seed(25)
-        print('<--- TEST GENERATION --->')
-        tokens = self.tokenizer([
-            'Сложно идти в',
-            'Естественно долго',
-            'Служить отечеству',
-            'Холоп',
-            'Тихо в',
-            'Сложно идти в',
-            'Естественно долго',
-            'Служить отечеству',
-            'Холоп',
-            'Тихо в',
-            'Сложно идти в',
-            'Естественно долго',
-            'Служить отечеству',
-            'Холоп',
-            'Тихо в',
-            'Сложно идти в',
-            'Естественно долго',
-            'Служить отечеству',
-            'Холоп',
-            'Тихо в',
-        ], return_tensors='pt', padding=True, truncation=True)
+        print('<--- TEST ANSWER --->')
+        inputs = [
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+            'Как у тебя дела?',
+            'How are you?',
+        ]
+        tokens = self.tokenizer([input + '. ' for input in inputs], return_tensors='pt', padding=True, truncation=True)
         generated = self.generator.generate(tokens)
 
         decoded = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
-        score = self.descriminator(decoded)
+        decoded = [decoded[i][len(inputs[i]) + 2:] for i in range(len(inputs))]
+        scores = self.descriminator(decoded)
 
-        to_print = "\n".join(decoded)
-        print(f'Mean score = {score}')
+        to_print = "\n".join([f'{float(scores[i]):.2f} = {decoded[i]}' for i in range(len(decoded))])
+        print(f'Mean score = {torch.mean(scores)}')
+        print(f'Generated:\n{to_print}')
+        print('<--- TEST ANSWER end --->')
+        return decoded
+
+    def test_generate(self) -> List[str]:
+        torch.manual_seed(25)
+        print('<--- TEST GENERATION --->')
+        inputs = [
+            'Сложно идти в',
+            'Естественно долго',
+            'Служить отечеству',
+            'Холоп',
+            'Тихо в',
+            'Сложно идти в',
+            'Естественно долго',
+            'Служить отечеству',
+            'Холоп',
+            'Тихо в',
+            'Сложно идти в',
+            'Естественно долго',
+            'Служить отечеству',
+            'Холоп',
+            'Тихо в',
+            'Сложно идти в',
+            'Естественно долго',
+            'Служить отечеству',
+            'Холоп',
+            'Тихо в',
+        ]
+        tokens = self.tokenizer(inputs, return_tensors='pt', padding=True, truncation=True)
+        generated = self.generator.generate(tokens)
+
+        decoded = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
+        scores = self.descriminator(decoded)
+
+        to_print = "\n".join([f'{float(scores[i]):.2f} = {decoded[i]}' for i in range(len(decoded))])
+        print(f'Mean score = {torch.mean(scores)}')
         print(f'Generated:\n{to_print}')
         print('<--- TEST GENERATION end --->')
         return decoded
     
+    def get_score(self) -> None:
+        trues = []
+        falses = []
+        batch_size = 8
+
+        true_progress_bar = tqdm(range(500))
+        for i in range(0, 500, batch_size):
+            inputs = [' '.join(item.split(' ')[:3]) for item in self.df.values[i: i + batch_size].flatten()]
+            tokens = self.tokenizer(inputs, return_tensors='pt', padding=True, truncation=True)
+            generated = self.generator.generate(tokens)
+            decoded = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
+            trues.append(torch.mean(self.descriminator(decoded)))
+            true_progress_bar.update(batch_size)
+        
+        false_progress_bar = tqdm(range(500))
+        for i in range(0, 500, batch_size):
+            inputs = [' '.join(item.split(' ')[:3]) for item in self.false_df.values[i: i + batch_size].flatten()]
+            tokens = self.tokenizer(inputs, return_tensors='pt', padding=True, truncation=True)
+            generated = self.generator.generate(tokens)
+            decoded = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
+            falses.append(torch.mean(self.descriminator(decoded)))
+            false_progress_bar.update(batch_size)
+
+        trues = torch.tensor(trues)
+        falses = torch.tensor(falses)
+        print(f'True score = {torch.mean(trues)}')
+        print(f'False score = {torch.mean(falses)}')
+        return []
+
     def save(self, save_to_hub=False) -> None:
         self.tokenizer.save_pretrained('Roaoch/CyberClassic-Generator', push_to_hub=save_to_hub)
         self.generator.model.save_pretrained('Roaoch/CyberClassic-Generator', push_to_hub=save_to_hub)
