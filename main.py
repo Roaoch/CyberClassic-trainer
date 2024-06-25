@@ -12,7 +12,7 @@ text_generator = GAN(
     false_df_path='./false_dataset.csv',
     is_train_generator=False,
     is_train_discriminator=False,
-    is_train_gan=True,
+    is_train_gan=False,
     n_epochs=8
 )
 # text_generator.save()
