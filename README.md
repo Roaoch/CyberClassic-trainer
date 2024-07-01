@@ -18,4 +18,5 @@ On this step we perform second round of training text generation model, with TRL
 
 ## Part of CyberClassic model
 Trainer enviroment for ML-modle of [telegram bot](https://t.me/cyber_classic_bot)
+
 [HuggingFace Collection](https://huggingface.co/collections/Roaoch/cyberclassic-667bb10da45b8108ed4720d3)
