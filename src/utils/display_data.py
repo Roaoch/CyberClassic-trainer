@@ -6,12 +6,16 @@ discriminator_metrics = pd.read_json('./discriminator_metrics.json')
 gan_metrics = pd.read_json('./rl_metrics.json')
 generator_metrics = pd.read_json('./generator_metrics.json')
 test_generation = pd.read_json('./test_generation.json')
+true_df = pd.read_csv('./dataset.csv')
+false_df = pd.read_csv('./false_dataset.csv')
 
 fig, axs = plt.subplots(3, 2)
 
 print(discriminator_metrics.describe())
 print(gan_metrics.describe())
 print(generator_metrics.describe())
+print(true_df.describe())
+print(false_df.describe())
 
 # Descriminator
 epochs = len(discriminator_metrics)
