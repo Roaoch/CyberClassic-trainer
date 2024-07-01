@@ -1,10 +1,10 @@
 # CyberClassic-trainer
 
-This is a training environment for model of CyberClassic collection.
-Current training environment pipline contain three steps: FineTune GPT2 model, FineTune T5 model, Reinforcement learning of text generator
-Env has two separete datasets
-*True dataset. Size 13048 rows. Column: Text - single sentence from the texts of Dostovesky F.M.
-*False dataset. Size 5771 rows. Column: Text - single sentence from the texts of Kuprin A.I. and sentences geenerated with [RuGPT3](https://huggingface.co/ai-forever/rugpt3small_based_on_gpt2)
+This is a training environment for model of CyberClassic collection. 
+Current training environment pipline contain three steps: FineTune GPT2 model, FineTune T5 model, Reinforcement learning of text generator 
+Env has two separete datasets 
+* True dataset. Size 13048 rows. Column: Text - single sentence from the texts of Dostovesky F.M.
+* False dataset. Size 5771 rows. Column: Text - single sentence from the texts of Kuprin A.I. and sentences geenerated with [RuGPT3](https://huggingface.co/ai-forever/rugpt3small_based_on_gpt2)
 
 ### FineTune GPT2 model
 On this step base [GPT2 model](https://huggingface.co/openai-community/gpt2) finetuned on true dataset.
